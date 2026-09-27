@@ -36,9 +36,7 @@ local function frame()
 	runCallback("OnFrame")
 end
 
--- PoB's Calcs tab keeps its own copy of every skill selection. Socket group and
--- active skill are chosen independently in the Calcs toolbar; the remaining
--- detail selectors still follow their main-skill twins until they get controls.
+-- Calcs owns socket and active selection; unsupported detail selectors follow the main skill.
 local CALCS_TWINS = {
 	skillPart = "skillPartCalcs",
 	skillStageCount = "skillStageCountCalcs",
@@ -53,8 +51,7 @@ local CALCS_TWINS = {
 local function syncCalcsSelection()
 	if not build or not build.calcsTab or not build.skillsTab then return false end
 	local changed = false
-	-- PoB reloads the table-valued twins in another shape, so only a stat set
-	-- choice that is not the default counts as a change for them.
+	-- Only non-default table-valued stat sets count as changed after PoB reloads them.
 	local function set(t, key, value)
 		if t[key] == value then return end
 		if type(value) == "table" then
@@ -672,14 +669,27 @@ end
 -- Build lifecycle
 -- ---------------------------------------------------------------------------
 
--- Fill the Calcs-only detail fields that do not have app controls yet before
--- anything reads the CALCS output. The saved socket group and active skill stay
--- independent, as they are in PoB.
+-- A loaded build starts Calcs on its main skill.
 local function loaded()
 	main.__reduxBuildGeneration = main.__reduxBuildGeneration + 1
 	build = main.modes["BUILD"]
 	ensureBuild()
-	if syncCalcsSelection() then refresh() end
+	local changed = false
+	local input = build.calcsTab.input
+	local skillNumber = build.mainSocketGroup or 1
+	if input.skill_number ~= skillNumber then
+		input.skill_number = skillNumber
+		changed = true
+	end
+	for _, group in ipairs(build.skillsTab.socketGroupList or {}) do
+		local activeSkill = group.mainActiveSkill or 1
+		if group.mainActiveSkillCalcs ~= activeSkill then
+			group.mainActiveSkillCalcs = activeSkill
+			changed = true
+		end
+	end
+	if syncCalcsSelection() then changed = true end
+	if changed then refresh() end
 	return M.get_build()
 end
 
@@ -1121,7 +1131,6 @@ M.calc_skill = function(p)
 		}
 	end
 
-	-- The two selectors moved out of View Skill Details and into the app toolbar.
 	local changed = false
 	local list = build.skillsTab.socketGroupList or {}
 	if p and p.group ~= nil then
@@ -1167,10 +1176,10 @@ local EFFECT_ART_NAMES = {
 	["Spirit Infusions"] = "Spirit Infusion",
 	["Ghost Shrouds"] = "Ghost Shroud",
 	["Crab Barriers"] = "Crab Barrier",
+	["ArmourBreak"] = "Armour Break",
 }
 
--- Status effects for the compact in-game-style bar above the Calcs cards.
--- PoB has already filtered these lists for the selected buff mode and actor.
+-- PoB filters these status effects for the selected buff mode and actor.
 M.calc_effects = function(p)
 	ensureBuild()
 	local env = build.calcsTab.calcsEnv or build.calcsTab.mainEnv
@@ -1180,18 +1189,20 @@ M.calc_effects = function(p)
 	local seen = {}
 	local function add(name, kind, count)
 		if not name or name == "" then return end
-		local previous = seen[name]
+		local label = tostring(name):gsub(":%s*{%d+}", "")
+		label = label:gsub("(%l)(%u)", "%1 %2")
+		local previous = seen[label]
 		if previous then
 			if count and (previous.count == null or count > previous.count) then previous.count = count end
 			return
 		end
 		local effect = {
-			name = name,
-			artName = EFFECT_ART_NAMES[name] or name,
+			name = label,
+			artName = EFFECT_ART_NAMES[name] or label,
 			kind = kind,
 			count = count or null,
 		}
-		seen[name] = effect
+		seen[label] = effect
 		effects[#effects + 1] = effect
 	end
 	local function addList(value, kind)
@@ -1275,8 +1286,7 @@ M.calc_sections = function(p)
 	return { sections = out, rev = build.outputRevision }
 end
 
--- Breakdown for one Calcs-grid cell (the cell's entry list drives
--- CalcBreakdownControl exactly as clicking it does in PoB).
+-- A Calcs-grid cell uses the same breakdown entries as PoB's click control.
 M.calc_cell_breakdown = function(p)
 	ensureBuild()
 	local section = build.calcsTab.sectionList[tonumber(p and p.section) or -1]

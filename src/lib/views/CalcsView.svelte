@@ -201,15 +201,15 @@
   }
 
   function isHitDamageHero(sec: CalcSection, row: CalcRow) {
-    return sec.id === "HitDamage" && (row.label === "Skill Average Hit" || row.label === "Skill DPS");
+    return sec.id === "HitDamage" && (row.label === "Skill Average Hit" || row.label === "MH Average Hit" || row.label === "Skill DPS");
   }
 
   function compactHitNumber(value: number) {
-    const rounded = Math.abs(value) >= 1_000 ? Math.round(value / 1_000) * 1_000 : value;
-    const magnitude = Math.abs(rounded);
-    if (magnitude >= 1_000_000_000) return `${(rounded / 1_000_000_000).toFixed(3)}b`;
-    if (magnitude >= 1_000_000) return `${(rounded / 1_000_000).toFixed(3)}m`;
-    if (magnitude >= 1_000) return `${rounded / 1_000}k`;
+    const magnitude = Math.abs(value);
+    const compact = (divisor: number, suffix: string) => `${Number((value / divisor).toPrecision(3))}${suffix}`;
+    if (magnitude >= 1_000_000_000) return compact(1_000_000_000, "b");
+    if (magnitude >= 1_000_000) return compact(1_000_000, "m");
+    if (magnitude >= 1_000) return compact(1_000, "k");
     return Math.round(value).toLocaleString("en-US");
   }
 
@@ -304,8 +304,7 @@
     return Number.isFinite(count) ? count : 0;
   }
 
-  // Local to the Calcs page: CSS Grid has no dependable masonry rows in the
-  // desktop webview, so each card measures its own height into tiny grid tracks.
+  // Measure cards because the desktop webview lacks CSS masonry rows.
   function masonryCard(node: HTMLElement) {
     let frame = 0;
     const layout = () => {
@@ -384,7 +383,7 @@
   <div class="body">
       <div class="cards">
         {#if effects.length > 0}
-          <div class="effectbar" class:poe2={game.isPoe2} role="list">
+          <div class="effectbar" role="list">
             {#each effects as effect (`${effect.kind}:${effect.name}`)}
               <div
                 class="effect"
@@ -657,7 +656,8 @@
     scrollbar-width: thin;
   }
   .effect {
-    --effect-art-border: #4f733c;
+    --effect-accent: var(--ok);
+    --effect-art-border: var(--ok);
     position: relative;
     flex: 0 0 48px;
     width: 48px;
@@ -665,24 +665,14 @@
     padding: 4px;
     border: 1px solid var(--line-2);
     border-radius: 3px;
-    background: linear-gradient(#354526, #11160e);
+    background: color-mix(in srgb, var(--effect-accent) 14%, var(--bg-3));
     box-shadow:
-      inset 0 0 0 2px #26351d,
-      inset 0 0 7px #000;
-  }
-  .effectbar.poe2 .effect {
-    --effect-art-border: #5d8249;
-    background: linear-gradient(#3b572f, #10160e);
-    box-shadow:
-      inset 0 0 0 2px #335128,
-      inset 0 0 7px #000;
+      inset 0 0 0 2px var(--bg-2),
+      inset 0 0 7px var(--bg-0);
   }
   .effect.debuff {
-    --effect-art-border: #814052;
-    background: linear-gradient(#4a2632, #170d11);
-    box-shadow:
-      inset 0 0 0 2px #542333,
-      inset 0 0 7px #000;
+    --effect-accent: var(--bad);
+    --effect-art-border: var(--bad);
   }
   .effect img,
   .sigil {
@@ -691,18 +681,17 @@
     display: grid;
     place-items: center;
     border: 1px solid var(--effect-art-border);
-    background: #071008;
+    background: var(--bg-0);
   }
   .effect img {
     display: block;
     object-fit: cover;
   }
   .sigil {
-    color: #d6e6c6;
+    color: var(--fg-0);
     font-size: var(--fs-xs);
     font-weight: 700;
     letter-spacing: 0.03em;
-    text-shadow: 0 1px 2px #000;
   }
   .effectcount {
     position: absolute;
@@ -713,13 +702,13 @@
     transform: translateX(-50%);
     border: 1px solid var(--line-2);
     border-radius: 2px;
-    background: #050505;
-    color: #fff;
+    background: var(--bg-0);
+    color: var(--fg-0);
     font-size: 11px;
     font-weight: 700;
     line-height: 14px;
     text-align: center;
-    box-shadow: 0 1px 2px #000;
+    box-shadow: 0 1px 2px var(--bg-0);
   }
   .section {
     display: block;
@@ -791,6 +780,9 @@
   }
   .hit-heroes {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .hit-heroes .stat-hero:only-child {
+    grid-column: 1 / -1;
   }
   .damage-heroes {
     grid-template-columns: repeat(6, minmax(0, 1fr));
@@ -872,7 +864,7 @@
     background: var(--bg-3);
     box-shadow:
       inset 0 0 0 2px var(--bg-2),
-      inset 0 0 7px #000;
+      inset 0 0 7px var(--bg-0);
   }
   .sublabel {
     font-size: var(--fs-xs);
@@ -892,7 +884,7 @@
     line-height: 1.5;
   }
   .rows.wide {
-    grid-template-columns: minmax(130px, 1.35fr) repeat(var(--cols), minmax(0, 1fr));
+    grid-template-columns: minmax(130px, 1.35fr) repeat(var(--cols), minmax(max-content, 1fr));
     column-gap: 0;
   }
   .crow {
@@ -946,8 +938,7 @@
   .wide .cell.span {
     text-align: left;
   }
-  /* The floor sits inside the button: a min-width on the button itself would replace the
-     automatic minimum, and the track would stop seeing the text width. */
+  /* Keep PoB's value-column floor inside the cell. */
   .wide .ct {
     display: inline-block;
     min-width: var(--colw);

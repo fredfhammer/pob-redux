@@ -231,8 +231,6 @@
   "notes_placeholder": "Notes are saved with the build.",
   "notes_empty": "No notes. Choose Edit to add some.",
 
-  "calcs_sections": "Sections",
-  "calcs_raw": "Raw output",
   "calcs_player": "Player",
   "calcs_minion": "Minion",
   "calcs_socket_group": "Group",
@@ -250,7 +248,6 @@
   "calcs_hit": "Hit",
   "calcs_maximum": "Maximum",
   "calcs_required": "{value} Required",
-  "calcs_filter": "Filter output keys…",
 
   "provider_intro_agents": "Each coding agent runs on this computer, signed in to your own account, so your plan's usage limits apply. The app starts the program and never sees your login, and the agent can only use the build's tools. Ollama runs a model on your own machine.",
   "provider_not_installed": "not installed",
