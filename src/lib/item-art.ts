@@ -10,6 +10,10 @@ export interface ArtMap {
   bases: Record<string, string>;
   uniques: Record<string, string>;
   sockets: Record<string, string>;
+  skills: Record<string, string>;
+  buffs: Record<string, string>;
+  buffNames: Record<string, string>;
+  buffVisuals: Record<string, string>;
   files: Record<string, string>;
 }
 
@@ -103,4 +107,23 @@ export async function socketArtUrls(game: Game): Promise<Record<string, string>>
       return url ? [[key, url]] : [];
     }),
   );
+}
+
+/** Status art is name-addressed for PoB output, with internal ids as a fallback for older maps. */
+export async function statusEffectArtUrls(game: Game, names: string[]): Promise<Record<string, string>> {
+  const map = await artMap(game);
+  if (!map) return {};
+  const urls: [string, string][] = [];
+  for (const name of names) {
+    const id = name.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
+    const path = lookup(map.buffNames, name)
+      ?? lookup(map.buffs, id)
+      ?? lookup(map.buffVisuals, id)
+      // Some new effects have no icon on their BuffVisual; use HUD skill art,
+      // never the visually distinct gem inventory art from `bases`.
+      ?? lookup(map.skills, name);
+    const url = path && artUrl(map, path);
+    if (url) urls.push([name, url]);
+  }
+  return Object.fromEntries(urls);
 }
