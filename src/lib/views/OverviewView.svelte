@@ -4,12 +4,13 @@
   import { ui, type Jump } from "$lib/state/ui.svelte";
   import { game } from "$lib/state/game.svelte";
   import { loadTree } from "$lib/tree/load";
-  import type { TreeModel } from "$lib/tree/model";
+  import { ascendancyPlate, plateNodes, type TNode, type TreeModel } from "$lib/tree/model";
   import { stripPobText } from "$lib/pobtext";
   import ClassArt from "$lib/components/ClassArt.svelte";
   import CharacterDialog from "$lib/components/CharacterDialog.svelte";
   import EquipmentGrid from "$lib/components/EquipmentGrid.svelte";
   import PobTooltip from "$lib/components/PobTooltip.svelte";
+  import NodeTooltip from "$lib/components/NodeTooltip.svelte";
   import { m } from "$lib/paraglide/messages";
 
   const FIELDS = [
@@ -99,6 +100,34 @@
   });
   const jewels = $derived(slots.filter((s) => s.nodeId && s.itemId > 0));
 
+  // Hover targets over the ascendancy nodes the portrait draws: it scales
+  // the plate so its half width fills the circle's radius.
+  const PORTRAIT = 136;
+  const allocated = $derived(new Set(build.tree?.allocatedNodes ?? []));
+  const ascPins = $derived.by(() => {
+    const name = info?.ascendClassName;
+    if (!model || !name) return [];
+    const plate = ascendancyPlate(model, info?.className ?? null, name);
+    if (!plate?.half) return [];
+    const k = PORTRAIT / 2 / plate.half;
+    return plateNodes(model, plate)
+      .filter((n) => n.kind === "notable" || n.kind === "normal")
+      .map((node) => ({ node, notable: node.kind === "notable", left: PORTRAIT / 2 + (node.x - plate.x) * k, top: PORTRAIT / 2 + (node.y - plate.y) * k }));
+  });
+  // The tree tab's node tooltip, beside the hovered node and kept on screen once measured.
+  let nodeTip = $state<{ node: TNode; x: number; y: number } | null>(null);
+  let nodeTipEl = $state<HTMLDivElement | null>(null);
+  let nodeTipTop = $state(0);
+  function showNodeTip(e: MouseEvent | FocusEvent, node: TNode) {
+    const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    nodeTip = { node, x: r.right + 10, y: r.top - 8 };
+  }
+  $effect(() => {
+    const t = nodeTip;
+    const h = nodeTipEl?.offsetHeight ?? 0;
+    if (t) nodeTipTop = Math.max(8, Math.min(t.y, window.innerHeight - h - 8));
+  });
+
   const notCounted = $derived(build.sidebar?.notCounted);
   const marked = $derived(new Set(notCounted?.items.map((x) => x.slot) ?? []));
 
@@ -152,10 +181,25 @@
     <div class="col">
       <section class="panel">
         <div class="hero">
-          <button class="portrait" title={m.ov_asc_title()} onclick={() => (ascOpen = true)}>
-            {#if build.tree}<ClassArt version={build.tree.treeVersion} className={info.className} ascendancy={info.ascendClassName} size={136} />{/if}
-            <span class="change">{m.char_ascendancy()}</span>
-          </button>
+          <div class="portrait-wrap">
+            <button class="portrait" title={m.ov_asc_title()} onclick={() => (ascOpen = true)}>
+              {#if build.tree}<ClassArt version={build.tree.treeVersion} className={info.className} ascendancy={info.ascendClassName} size={PORTRAIT} {allocated} />{/if}
+            </button>
+            {#each ascPins as p (p.node.id)}
+              <button
+                class="pin"
+                class:notable={p.notable}
+                style:left="{p.left}px"
+                style:top="{p.top}px"
+                aria-label={p.node.name}
+                onmouseenter={(e) => showNodeTip(e, p.node)}
+                onmouseleave={() => (nodeTip = null)}
+                onfocus={(e) => showNodeTip(e, p.node)}
+                onblur={() => (nodeTip = null)}
+                onclick={() => go("tree", { view: "tree", node: p.node.id, name: p.node.name })}
+              ></button>
+            {/each}
+          </div>
           <div class="who">
             <span class="nm">{info.name}</span>
             <span class="cl">
@@ -306,6 +350,22 @@
     </div>
   </div>
   {#if ascOpen}<CharacterDialog mode="ascendancy" onclose={() => (ascOpen = false)} />{/if}
+  {#if nodeTip}
+    {@const id = nodeTip.node.id}
+    <NodeTooltip
+      node={nodeTip.node}
+      fixed
+      bind:el={nodeTipEl}
+      left={nodeTip.x}
+      top={nodeTipTop}
+      override={build.tree?.overrides?.[String(id)]}
+      notCalc={new Set(build.tree?.unsupported?.[String(id)] ?? [])}
+    >
+      {#snippet foot()}
+        {#if allocated.has(id)}<span style:color="var(--ok)">{m.tree_allocated()}</span>{:else}<span></span>{/if}
+      {/snippet}
+    </NodeTooltip>
+  {/if}
   {#if tip}
     <PobTooltip lines={tip.tt.lines} header={tip.tt.header} runic={tip.tt.runic} uniqueGem={tip.tt.uniqueGem} itemArt={tip.tt.itemArt} x={tip.x} y={tip.y} />
   {/if}
@@ -391,18 +451,31 @@
   .portrait:hover {
     box-shadow: 0 0 0 1px var(--fg-2);
   }
-  .change {
+  .portrait-wrap {
+    position: relative;
+    display: inline-flex;
+    align-self: start;
+  }
+  .pin {
+    appearance: none;
     position: absolute;
-    left: 50%;
-    bottom: 4px;
-    transform: translateX(-50%);
-    padding: 1px 8px;
-    border: 1px solid var(--line-2);
-    border-radius: 10px;
-    background: var(--bg-2);
-    color: var(--fg-1);
-    font-size: var(--fs-2xs);
-    white-space: nowrap;
+    width: 6px;
+    height: 6px;
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    background: none;
+    transform: translate(-50%, -50%);
+    cursor: pointer;
+  }
+  .pin.notable {
+    width: 13px;
+    height: 13px;
+  }
+  .pin:hover,
+  .pin:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 1.5px var(--fg-0);
   }
   .who {
     display: flex;

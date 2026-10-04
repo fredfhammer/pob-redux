@@ -570,6 +570,24 @@ export function parseTree(version: string, json: string): TreeModel {
   };
 }
 
+/** An ascendancy's plate, preferring the one under `className` when two share a name. */
+export function ascendancyPlate(M: TreeModel, className: string | null, name: string): TAscendancy | undefined {
+  return M.classes.find((c) => c.name === className)?.ascendancies.find((a) => a.name === name) ?? M.classes.flatMap((c) => c.ascendancies).find((a) => a.name === name);
+}
+
+/**
+ * The drawable nodes that sit on an ascendancy's plate. Nodes are tagged with
+ * the name, the internal id (PoE1's Warden is "Raider") or, for a PoE2 variant,
+ * the ascendancy it replaces. Real nodes reach 0.95 of the plate's radius;
+ * PoE1's retired ones, and the bloodline Warden's that share a tag, sit 1.5+ out.
+ */
+export function plateNodes(M: TreeModel, plate: TAscendancy): TNode[] {
+  const tags = new Set([plate.name, plate.id, plate.replace]);
+  return [...M.nodes.values()].filter(
+    (n) => n.asc !== null && tags.has(n.asc) && !n.hidden && n.kind !== "classStart" && n.kind !== "onlyImage" && Math.hypot(n.x - plate.x, n.y - plate.y) <= plate.half * 1.2,
+  );
+}
+
 /** The offset that puts an ascendancy's plate on its class hub, where PoE2 shows it; null in PoE1. */
 export function ascendancyShift(M: TreeModel, name: string | null): { asc: TAscendancy; dx: number; dy: number } | null {
   if (!name) return null;
