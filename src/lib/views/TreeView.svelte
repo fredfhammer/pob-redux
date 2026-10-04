@@ -2444,47 +2444,38 @@
     {#if hover && !attrMenu && !masteryMenu}
       {@const ov = overrides[String(hover.id)]}
       {@const socketed = hover.kind === "socket" ? sockets.get(hover.id) : undefined}
-      <NodeTooltip node={hover} override={ov} notCalc={build.tree?.unsupported?.[String(hover.id)]} allocated={allocated.has(hover.id)} bind:el={tipEl} left={tipPlacement.node} top={Math.max(8, Math.min(mouse.y + 18, h - tipH - 8))}
-        refs={[...(socketed ? [{ label: m.tree_socketed(), text: socketed.title ?? socketed.name, rarity: socketed.rarity }] : []), ...(hoverGrant ? [{ label: m.tree_granted_by(), text: hoverGrant.source ?? m.tree_granted_unknown(), rarity: hoverGrant.rarity, note: hoverGrant.slot }] : [])]}>
-        {#if hoverRecipe}
-          <div class="tip-recipe">
-            <span class="dim">{m.tree_anoint()}</span>
-            {#each hoverRecipe as r, i (i)}
-              <span class="recipe-item" title={r.name}>{#if r.url}<img src={r.url} alt="" />{/if}{r.word}</span>
-            {/each}
-          </div>
-        {/if}
-        {#if hoverBlocked}
-          <div class="tip-warn">{hoverBlocked}</div>
-        {/if}
-        {#if ui.treeStatDiff && statDiff && statDiff.id === hover.id}
-          <div class="tip-diff">
-            {#if statDiff.changes === 0}
-              <div class="dim">{m.tree_no_changes()}</div>
-            {:else}
-              {#each statDiff.lines as l}
-                <div class:head={l.head}><PobText text={l.text} /></div>
-              {/each}
-            {/if}
-          </div>
-        {/if}
-        <div class="tip-foot num">
-          {#if allocated.has(hover.id)}
-            {@const set = weaponSets.get(hover.id)}
+      {@const notCalc = new Set(build.tree?.unsupported?.[String(hover.id)] ?? [])}
+      <NodeTooltip
+        node={hover}
+        bind:el={tipEl}
+        left={tipPlacement.node}
+        top={Math.max(8, Math.min(mouse.y + 18, h - tipH - 8))}
+        override={ov}
+        {socketed}
+        grant={hoverGrant}
+        {notCalc}
+        showMastery={!allocated.has(hover.id)}
+        recipe={hoverRecipe}
+        blocked={hoverBlocked}
+        diff={ui.treeStatDiff && statDiff && statDiff.id === hover.id ? statDiff : null}
+      >
+        {#snippet foot()}
+          {@const node = hover!}
+          {#if allocated.has(node.id)}
+            {@const set = weaponSets.get(node.id)}
             <span style:color={set === 1 ? "var(--bad)" : "var(--ok)"}>{set ? m.tree_in_weapon_set({ set: set === 1 ? "I" : "II" }) : m.tree_allocated()}</span>
             {#if !hoverBlocked}
-              <span class="dim">{hoverDep.size > 1 ? m.tree_click_removes({ count: hoverDep.size }) : m.tree_click_to_remove()}{hover.isAttribute ? m.tree_right_click_switch() : hover.kind === "mastery" ? m.tree_right_click_effect() : ""}</span>
+              <span class="dim">{hoverDep.size > 1 ? m.tree_click_removes({ count: hoverDep.size }) : m.tree_click_to_remove()}{node.isAttribute ? m.tree_right_click_switch() : node.kind === "mastery" ? m.tree_right_click_effect() : ""}</span>
             {/if}
           {:else if hoverCost != null}
             <span>{m.tree_point_cost({ count: hoverCost })}</span>
             {#if !hoverBlocked}
-              <span class="dim">{shiftDown && trace.length ? m.tree_tracing() : hover.kind === "mastery" ? m.tree_choose_effect() : m.tree_click_allocate()}</span>
+              <span class="dim">{shiftDown && trace.length ? m.tree_tracing() : node.kind === "mastery" ? m.tree_choose_effect() : m.tree_click_allocate()}</span>
             {/if}
           {:else if !hoverBlocked}
             <span class="dim">…</span>
           {/if}
-          <span class="dim">#{hover.id}</span>
-        </div>
+        {/snippet}
       </NodeTooltip>
       {#if socketed && jewelTip && tipPlacement.showJewel}
         {@const r = wrap?.getBoundingClientRect()}
@@ -2903,55 +2894,5 @@
     gap: 6px;
     justify-content: flex-end;
     flex-wrap: wrap;
-  }
-  .tip-recipe {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 4px 10px;
-    margin-top: 6px;
-    font-size: var(--fs-xs);
-  }
-  .recipe-item {
-    display: inline-flex;
-    align-items: center;
-    gap: 3px;
-    color: var(--fg-1);
-  }
-  .recipe-item img {
-    width: 20px;
-    height: 20px;
-    object-fit: contain;
-  }
-  .tip-warn {
-    margin-top: 6px;
-    color: var(--warn);
-    font-size: var(--fs-xs);
-  }
-  .tip-diff {
-    margin-top: 8px;
-    padding-top: 6px;
-    border-top: 1px solid var(--line-0);
-    font-family: var(--font-mono);
-    font-size: var(--fs-xs);
-    line-height: 1.45;
-  }
-  .tip-diff .head {
-    margin-top: 4px;
-    color: var(--fg-1);
-    font-family: var(--font-ui);
-  }
-  .tip-diff .head:first-child {
-    margin-top: 0;
-  }
-  .tip-foot {
-    display: flex;
-    justify-content: space-between;
-    gap: 8px;
-    margin-top: 8px;
-    padding-top: 6px;
-    border-top: 1px solid var(--line-0);
-    font-size: var(--fs-xs);
-    color: var(--fg-1);
   }
 </style>

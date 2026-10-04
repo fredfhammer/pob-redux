@@ -1495,6 +1495,9 @@ local function requireNode(p)
 	return node
 end
 
+-- A table, not locals: the main chunk is at LuaJIT's 200-local limit.
+local nodeUtil = {}
+
 local function nodeSummary(id, node)
 	return {
 		id = id,
@@ -1503,7 +1506,7 @@ local function nodeSummary(id, node)
 		stats = strArray(node.sd),
 		allocated = node.alloc == true,
 		ascendancyName = opt(node.ascendancyName),
-		pathCost = node.path and #node.path or null,
+		pathCost = node.path and #(nodeUtil.mainPath(node)) or null,
 		reminder = node.reminderText and strArray(node.reminderText) or null,
 	}
 end
@@ -1780,7 +1783,7 @@ local function withAllocMode(mode, fn, ...)
 	return res
 end
 
-local function touchesWeaponSet(node)
+function nodeUtil.touchesWeaponSet(node)
 	for i = 2, #(node.path or {}) do
 		local other = node.path[i]
 		if other.alloc and (other.allocMode or 0) > 0 then return true end
@@ -1791,13 +1794,42 @@ local function touchesWeaponSet(node)
 	return false
 end
 
+--- The main tree route PoB really allocates; `node.path` leaves out weapon set passives it would move.
+function nodeUtil.mainPath(node)
+	local path = node.path or {}
+	if IS_POE2 and node.path and not node.alloc then
+		local spec = build.spec
+		local ok, eff = pcall(withAllocMode, 0, spec.GetEffectiveAllocationPath, spec, node)
+		if ok and eff then path = eff end
+	end
+	local moved = 0
+	for _, n in ipairs(path) do
+		if n.alloc and (n.allocMode or 0) > 0 then moved = moved + 1 end
+	end
+	return path, moved
+end
+
+function nodeUtil.openMastery(node)
+	return not IS_POE2 and node.type == "Mastery" and node.allMasteryOptions and true or false
+end
+
+--- Must match PowerBuilder's cache key: one modKey can stand for nodes that calculate differently.
+function nodeUtil.powerKey(node)
+	local env = build.calcsTab.mainEnv
+	local key = node.modKey .. "|" .. node.type .. (node.isAttribute and "|attribute" or "") .. "|" .. (node.allocMode or 0)
+	for index, rad in ipairs(env and env.radiusJewelList or {}) do
+		if rad.nodes[node.id] then key = key .. "|" .. index end
+	end
+	return key
+end
+
 -- PassiveTreeView's rule for keystones and jewel sockets: the reason a click is refused, or nil.
 local function weaponSetBlock(node, mode)
 	if not IS_POE2 or not (node.type == "Keystone" or node.type == "Socket" or node.containJewelSocket) then return nil end
 	local kind = node.type == "Keystone" and "keystones" or "jewel sockets"
 	if not node.alloc and node.path then
 		if mode > 0 then return "Cannot allocate " .. kind .. " while weapon set " .. mode .. " is selected" end
-		if touchesWeaponSet(node) then return "Cannot allocate " .. kind .. " connected to weapon set passives" end
+		if nodeUtil.touchesWeaponSet(node) then return "Cannot allocate " .. kind .. " connected to weapon set passives" end
 	elseif node.alloc and (node.allocMode or 0) == 0 and mode > 0 then
 		return "Cannot remove main tree " .. kind .. " while weapon set " .. mode .. " is selected"
 	end
@@ -2310,18 +2342,20 @@ M.tree_power_partition = function(p)
 			end
 			if not hidden then
 				local dist = node.pathDist or 1000
-				for _, leap in ipairs(node.intuitiveLeapLikesAffecting or {}) do
-					if leap.alloc then dist = math.max(math.min(leap.pathDist or 1000, dist), 1) end
+				-- PoE1 PowerBuilder scores an open mastery at its plain path distance.
+				if not nodeUtil.openMastery(node) then
+					for _, leap in ipairs(node.intuitiveLeapLikesAffecting or {}) do
+						if leap.alloc then dist = math.max(math.min(leap.pathDist or 1000, dist), 1) end
+					end
 				end
 				node.power.distance = dist
 				if (not calcsTab.nodePowerMaxDepth) or dist <= calcsTab.nodePowerMaxDepth then
-					list[#list + 1] = { id = nodeId, dist = dist, modKey = node.modKey }
+					list[#list + 1] = { id = nodeId, dist = dist, modKey = nodeUtil.powerKey(node) }
 				end
 			end
 		end
 	end
-	-- identical mod keys share one calc in PowerBuilder's cache; keep them
-	-- adjacent so a contiguous slice lands on one worker
+	-- nodes with one cache key share one calc; keep them adjacent so a contiguous slice lands on one worker
 	table.sort(list, function(a, b)
 		if a.modKey ~= b.modKey then return a.modKey < b.modKey end
 		return a.id < b.id
@@ -2373,11 +2407,55 @@ local function scoreNodes(p)
 		if node then
 			local dist = num(p.dists and p.dists[i]) or node.pathDist or 1000
 			local r = { id = id, dist = dist }
-			if not node.alloc then
-				if not cache[node.modKey] then
-					cache[node.modKey] = calcFunc({ addNodes = { [node] = true } }, useFullDPS)
+			if nodeUtil.openMastery(node) then
+				-- PoE1 PowerBuilder: only one effect can be taken, so the mastery scores as its best one, floored at 0.
+				local spec = build.spec
+				for _, choice in ipairs(node.masteryEffects or {}) do
+					local takenBy = isValueInTable(spec.masterySelections, choice.effect)
+					local effect = (not takenBy or takenBy == node.id) and spec.tree.masteryEffects[choice.effect]
+					if effect then
+						local effectNode = { id = node.id, type = node.type, name = node.name, sd = {} }
+						for k, line in ipairs(effect.sd or {}) do effectNode.sd[k] = line end
+						spec.tree:ProcessStats(effectNode)
+						if effectNode.modKey ~= "" then
+							if not cache[effectNode.modKey] then
+								cache[effectNode.modKey] = calcFunc({ addNodes = { [effectNode] = true } }, useFullDPS)
+							end
+							local output = cache[effectNode.modKey]
+							if powerStat and powerStat.stat and not powerStat.ignoreForNodes then
+								local s = calcsTab:CalculatePowerStat(powerStat, output, calcBase)
+								local pathPower = s
+								if node.path and not node.ascendancyName then
+									r.rank = true
+									if dist > 1 then
+										local set = pathSet(i, node.path)
+										set[node] = nil
+										set[effectNode] = true
+										pathPower = calcsTab:CalculatePowerStat(powerStat, calcFunc({ addNodes = set }, useFullDPS), calcBase)
+									end
+								end
+								r.s = math.max(r.s or 0, s)
+								r.p = math.max(r.p or 0, pathPower)
+							elseif not powerStat or not powerStat.ignoreForNodes then
+								local o, d = calcsTab:CalculateCombinedOffDefStat(output, calcBase)
+								r.o = math.max(r.o or 0, o)
+								r.d = math.max(r.d or 0, d)
+								r.s = math.max(r.s or 0, o)
+								if node.path and not node.ascendancyName then r.rank = true end
+							end
+						end
+					end
 				end
-				local output = cache[node.modKey]
+			elseif not node.alloc then
+				if p.moves then
+					local _, moved = nodeUtil.mainPath(node)
+					if moved > 0 then r.moved = moved end
+				end
+				local key = nodeUtil.powerKey(node)
+				if not cache[key] then
+					cache[key] = calcFunc({ addNodes = { [node] = true } }, useFullDPS)
+				end
+				local output = cache[key]
 				if powerStat and powerStat.stat and not powerStat.ignoreForNodes then
 					r.s = calcsTab:CalculatePowerStat(powerStat, output, calcBase)
 					if node.path and not node.ascendancyName then
@@ -2393,7 +2471,7 @@ local function scoreNodes(p)
 					if node.path and not node.ascendancyName then r.rank = true end
 				end
 			else
-				local key = node.modKey .. "_remove"
+				local key = nodeUtil.powerKey(node) .. "_remove"
 				if not cache[key] then
 					cache[key] = calcFunc({ removeNodes = { [node] = true } }, useFullDPS)
 				end
@@ -2503,9 +2581,10 @@ end
 M.node_path = function(p)
 	ensureBuild()
 	local node = requireNode(p)
+	local path, moved = nodeUtil.mainPath(node)
 	local ids = array({})
-	for i, n in ipairs(node.path or {}) do ids[i] = n.id end
-	return { id = node.id, path = ids, cost = #ids, allocated = node.alloc == true }
+	for i, n in ipairs(path) do ids[i] = n.id end
+	return { id = node.id, path = ids, cost = #ids, weaponSetPassivesMoved = moved, allocated = node.alloc == true }
 end
 
 -- Objectives for path_plan. Matched against a node's stat lines, so a route can
@@ -2732,6 +2811,14 @@ M.alloc_node = function(p)
 				if o.takenBy == null then options[#options + 1] = string.format("%d (%s)", o.effect, table.concat(o.stats, " / ")) end
 			end
 			error(string.format("mastery %d needs an effect: pass effect as one of %s", node.id, table.concat(options, "; ")), 0)
+		end
+	end
+	if not node.alloc and not p.promote then
+		local path, moved = nodeUtil.mainPath(node)
+		if moved > 0 then
+			error(string.format(
+				"%s is reached through %d weapon set passive%s. Allocating it in the main tree moves them into the main tree, so it costs %d main tree points, not %d. Pass promote to do that anyway.",
+				node.dn or node.name or tostring(node.id), moved, moved == 1 and "" or "s", #path, #path - moved), 0)
 		end
 	end
 	build.spec:AllocNode(node)
@@ -7736,30 +7823,50 @@ local function configLabel(var)
 	return configLabels[var] or var
 end
 
-local function fmtStat(value, fmt)
+--- Build:FormatStat's rule: `pc` and `mod` stats are fractions shown as percent, a `mod` as its change from 1.
+local function fmtStat(value, entry, delta)
 	if type(value) ~= "number" then return value == nil and null or tostring(value) end
-	if not fmt or fmt == "" then return tostring(value) end
-	local ok, s = pcall(string.format, "%" .. fmt, value)
-	return ok and s or tostring(value)
+	local v = value * ((entry.pc or entry.mod) and 100 or 1) - ((entry.mod and not delta) and 100 or 0)
+	local ok, s = pcall(string.format, "%" .. (entry.fmt or "g"), v)
+	s = formatNumSep(ok and s or tostring(v))
+	return (delta and v > 0) and ("+" .. s) or s
 end
 
-local function statValue(output, entry)
-	if not output then return nil end
+--- nil where Build:AddDisplayStatList would leave the row out for that build's main skill.
+local function statValue(output, entry, skill)
+	if not output or entry.hideStat then return nil end
+	if skill and (entry.flag or entry.notFlag) then
+		local flags = (IS_POE2 and skill.activeEffect and skill.activeEffect.statSet and skill.activeEffect.statSet.skillFlags) or skill.skillFlags or {}
+		local need = type(entry.flag) == "string" and { entry.flag } or entry.flag or {}
+		local refuse = type(entry.notFlag) == "string" and { entry.notFlag } or entry.notFlag or {}
+		for _, f in ipairs(need) do
+			if not flags[f] then return nil end
+		end
+		for _, f in ipairs(refuse) do
+			if flags[f] then return nil end
+		end
+	end
 	local v = output[entry.stat]
 	if entry.childStat then
 		if type(v) ~= "table" then return nil end
 		v = v[entry.childStat]
 	end
 	if type(v) ~= "number" then return nil end
+	if entry.condFunc then
+		local ok, show = pcall(entry.condFunc, v, output)
+		if not (ok and show) then return nil end
+	elseif v == 0 then
+		return nil
+	end
 	return v
 end
 
 --- Both sides of PoB's sidebar stat list, as rows the UI can diff.
-local function compareStatRows(mine, theirs, onlyDiff)
+local function compareStatRows(mine, theirs, onlyDiff, mineSkill, theirSkill)
 	local rows = array({})
 	for _, entry in ipairs(build.displayStats or {}) do
 		if entry.stat then
-			local a, b = statValue(mine, entry), statValue(theirs, entry)
+			local a, b = statValue(mine, entry, mineSkill), statValue(theirs, entry, theirSkill)
 			if a ~= nil or b ~= nil then
 				local same = a == b
 				if not (onlyDiff and same) then
@@ -7773,10 +7880,10 @@ local function compareStatRows(mine, theirs, onlyDiff)
 						label = entry.label or entry.stat,
 						mine = a == nil and null or a,
 						theirs = b == nil and null or b,
-						mineText = a == nil and null or fmtStat(a, entry.fmt),
-						theirsText = b == nil and null or fmtStat(b, entry.fmt),
+						mineText = a == nil and null or fmtStat(a, entry),
+						theirsText = b == nil and null or fmtStat(b, entry),
 						delta = delta == nil and null or delta,
-						deltaText = delta == nil and null or fmtStat(delta, entry.fmt),
+						deltaText = delta == nil and null or fmtStat(delta, entry, true),
 						percent = (delta and a and a ~= 0) and (delta / math.abs(a) * 100) or null,
 						better = better,
 						same = same,
@@ -7865,7 +7972,8 @@ M.compare_summary = function(p)
 	ensureBuild()
 	local entry = compareEntry()
 	return {
-		rows = compareStatRows(build.calcsTab.mainOutput, entry:GetOutput(), p and p.onlyDifferences and true or false),
+		rows = compareStatRows(build.calcsTab.mainOutput, entry:GetOutput(), p and p.onlyDifferences and true or false,
+			build.calcsTab.mainEnv and build.calcsTab.mainEnv.player.mainSkill, entry.calcsTab.mainEnv and entry.calcsTab.mainEnv.player.mainSkill),
 		mine = { label = build.buildName or "This build", level = build.characterLevel },
 		theirs = compareMeta(compares[compareActive]),
 	}

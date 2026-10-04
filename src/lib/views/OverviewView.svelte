@@ -4,7 +4,7 @@
   import { ui, type Jump } from "$lib/state/ui.svelte";
   import { game } from "$lib/state/game.svelte";
   import { loadTree } from "$lib/tree/load";
-  import type { TreeModel } from "$lib/tree/model";
+  import { ascendancyPlate, portraitPins, type TNode, type TreeModel } from "$lib/tree/model";
   import { stripPobText } from "$lib/pobtext";
   import ClassArt from "$lib/components/ClassArt.svelte";
   import CharacterDialog from "$lib/components/CharacterDialog.svelte";
@@ -103,8 +103,30 @@
   });
   const jewels = $derived(slots.filter((s) => s.nodeId && s.itemId > 0));
 
-  const notCounted = $derived(build.sidebar?.notCounted);
-  const marked = $derived(new Set(notCounted?.items.map((x) => x.slot) ?? []));
+  const PORTRAIT = 136;
+  const allocated = $derived(new Set(build.tree?.allocatedNodes ?? []));
+  const ascPins = $derived.by(() => {
+    const name = info?.ascendClassName;
+    if (!model || !name) return [];
+    const plate = ascendancyPlate(model, info?.className ?? null, name);
+    return plate ? portraitPins(model, plate, PORTRAIT) : [];
+  });
+  let nodeTip = $state<{ node: TNode; x: number; y: number } | null>(null);
+  let nodeTipEl = $state<HTMLDivElement | null>(null);
+  let nodeTipTop = $state(0);
+  function showNodeTip(e: MouseEvent | FocusEvent, node: TNode) {
+    const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    nodeTip = { node, x: r.right + 10, y: r.top - 8 };
+  }
+  function nodeTipFor(e: MouseEvent | FocusEvent, id: number) {
+    const node = model?.nodes.get(id);
+    if (node) showNodeTip(e, node);
+  }
+  $effect(() => {
+    const t = nodeTip;
+    const h = nodeTipEl?.offsetHeight ?? 0;
+    if (t) nodeTipTop = Math.max(8, Math.min(t.y, window.innerHeight - h - 8));
+  });
 
   const AREA_VIEW: Record<string, ViewId> = {
     resistances: "items", "passive points": "tree", ascendancy: "tree", supports: "skills", spirit: "skills", reservation: "skills",
@@ -176,32 +198,6 @@
     clearTimeout(tipTimer);
     tip = null;
   }
-
-  let nodeTip = $state<{ id: number; cell: DOMRect } | null>(null);
-  let nodeTipEl = $state<HTMLDivElement | null>(null);
-  let nodeTipPos = $state({ left: 0, top: 0 });
-  let nodeTipTimer = 0;
-  const tipNode = $derived(nodeTip && model?.nodes.get(nodeTip.id));
-  function showNodeTip(e: MouseEvent | FocusEvent, id: number) {
-    clearTimeout(nodeTipTimer);
-    const cell = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    nodeTipTimer = window.setTimeout(() => (nodeTip = { id, cell }), 120);
-  }
-  function hideNodeTip() {
-    clearTimeout(nodeTipTimer);
-    nodeTip = null;
-  }
-  $effect(() => {
-    const el = nodeTipEl;
-    const cell = nodeTip?.cell;
-    if (!el || !cell) return;
-    const w = el.offsetWidth;
-    const h = el.offsetHeight;
-    nodeTipPos = {
-      left: cell.right + 8 + w <= window.innerWidth - 8 ? cell.right + 8 : Math.max(8, cell.left - 8 - w),
-      top: Math.max(8, Math.min(cell.top, window.innerHeight - h - 8)),
-    };
-  });
 </script>
 
 {#snippet pin(stat: string | null)}
@@ -217,10 +213,27 @@
     <div class="col">
       <section class="panel">
         <div class="hero">
-          <button class="portrait" title={m.ov_asc_title()} onclick={() => (ascOpen = true)}>
-            {#if build.tree}<ClassArt version={build.tree.treeVersion} className={info.className} ascendancy={info.ascendClassName} size={136} />{/if}
-            <span class="change">{m.char_ascendancy()}</span>
-          </button>
+          <div class="portrait-wrap">
+            <button class="portrait" title={m.ov_asc_title()} onclick={() => (ascOpen = true)}>
+              {#if build.tree}<ClassArt version={build.tree.treeVersion} className={info.className} ascendancy={info.ascendClassName} size={PORTRAIT} {allocated} />{/if}
+            </button>
+            {#each ascPins as p (p.node.id)}
+              <button
+                class="pin"
+                style:left="{p.left}px"
+                style:top="{p.top}px"
+                style:width="{p.size}px"
+                style:height="{p.size}px"
+                tabindex={p.notable ? 0 : -1}
+                aria-label={p.node.name}
+                onmouseenter={(e) => showNodeTip(e, p.node)}
+                onmouseleave={() => (nodeTip = null)}
+                onfocus={(e) => showNodeTip(e, p.node)}
+                onblur={() => (nodeTip = null)}
+                onclick={() => go("tree", { view: "tree", node: p.node.id, name: p.node.name })}
+              ></button>
+            {/each}
+          </div>
           <div class="who">
             <span class="nm">{info.name}</span>
             <span class="cl">
@@ -265,7 +278,7 @@
       <section class="panel">
         <div class="ph">
           <span class="t">{m.ov_gear()}</span>
-          <span class="s">{m.ov_gear_sum({ count: slots.filter((s) => s.itemId > 0 && !s.nodeId && s.shown !== false && !s.inactive).length })}{#if notCounted?.count}<span class="neg">{` · ${m.ov_gear_nc({ count: notCounted.count })}`}</span>{/if}</span>
+          <span class="s">{m.ov_gear_sum({ count: slots.filter((s) => s.itemId > 0 && !s.nodeId && s.shown !== false && !s.inactive).length })}</span>
         </div>
         <EquipmentGrid
           {slots}
@@ -274,7 +287,6 @@
           groups={build.skills?.socketGroups ?? []}
           selectedItem={null}
           legend={false}
-          {marked}
           onselect={(id) => go("items", { view: "items", item: id })}
           onitemhover={(e, id) => showTip(e, () => engine.itemTooltip({ itemId: id }))}
           ongemhover={(e, g, i) => showTip(e, () => engine.gemTooltip(g, i))}
@@ -305,7 +317,7 @@
 
     <div class="col">
       <section class="panel">
-        <div class="ph"><span class="t">{m.ov_health()}</span><span class="s">{findings.length + (notCounted?.count ? 1 : 0) ? m.ov_health_sum({ count: findings.length + (notCounted?.count ? 1 : 0) }) : m.ov_health_ok()}</span></div>
+        <div class="ph"><span class="t">{m.ov_health()}</span><span class="s">{findings.length ? m.ov_health_sum({ count: findings.length }) : m.ov_health_ok()}</span></div>
         {#each findings as f, i (i)}
           {@const view = AREA_VIEW[f.area]}
           <div class="finding">
@@ -314,13 +326,6 @@
             {#if view}<button class="golink" onclick={() => go(view)}>{VIEW_LABEL[view]} →</button>{/if}
           </div>
         {/each}
-        {#if notCounted?.count}
-          <div class="finding">
-            <span class="dot"></span>
-            <div class="ft"><div class="msg">{m.ov_nc_msg({ count: notCounted.count })}</div><div class="fix">{m.sidebar_not_counted_title()}</div></div>
-            <button class="golink" onclick={() => notCounted.items[0] ? go("items", { view: "items", item: slots.find((s) => s.slot === notCounted.items[0].slot)?.itemId ?? 0 }) : go("tree")}>{m.view_items()} →</button>
-          </div>
-        {/if}
       </section>
 
       <section class="panel">
@@ -354,11 +359,11 @@
         <div class="pass">
           {#if nodesBy.keystones.length}
             <span class="k">{m.ov_keystones()}</span>
-            <span class="links">{#each nodesBy.keystones as k, i (k.id)}{#if i}<span class="sep">·</span>{/if}<button class="key" onmouseenter={(e) => showNodeTip(e, k.id)} onfocus={(e) => showNodeTip(e, k.id)} onmouseleave={hideNodeTip} onblur={hideNodeTip} onclick={() => (hideNodeTip(), go("tree", { view: "tree", node: k.id, name: k.name }))}>{k.name}</button>{/each}</span>
+            <span class="links">{#each nodesBy.keystones as k, i (k.id)}{#if i}<span class="sep">·</span>{/if}<button class="key" onmouseenter={(e) => nodeTipFor(e, k.id)} onfocus={(e) => nodeTipFor(e, k.id)} onmouseleave={() => (nodeTip = null)} onblur={() => (nodeTip = null)} onclick={() => ((nodeTip = null), go("tree", { view: "tree", node: k.id, name: k.name }))}>{k.name}</button>{/each}</span>
           {/if}
           {#if nodesBy.asc.length}
             <span class="k">{m.ov_ascendancy()}</span>
-            <span class="links">{#each nodesBy.asc as k, i (k.id)}{#if i}<span class="sep">·</span>{/if}<button class="asc" onmouseenter={(e) => showNodeTip(e, k.id)} onfocus={(e) => showNodeTip(e, k.id)} onmouseleave={hideNodeTip} onblur={hideNodeTip} onclick={() => (hideNodeTip(), go("tree", { view: "tree", node: k.id, name: k.name }))}>{k.name}</button>{/each}</span>
+            <span class="links">{#each nodesBy.asc as k, i (k.id)}{#if i}<span class="sep">·</span>{/if}<button class="asc" onmouseenter={(e) => nodeTipFor(e, k.id)} onfocus={(e) => nodeTipFor(e, k.id)} onmouseleave={() => (nodeTip = null)} onblur={() => (nodeTip = null)} onclick={() => ((nodeTip = null), go("tree", { view: "tree", node: k.id, name: k.name }))}>{k.name}</button>{/each}</span>
           {/if}
           <span class="k">{m.ov_notables()}</span><span>{m.ov_notables_count({ count: nodesBy.notables })}</span>
           {#if game.isPoe2 && (info.points.weaponSet1Used || info.points.weaponSet2Used)}
@@ -374,11 +379,24 @@
     </div>
   </div>
   {#if ascOpen}<CharacterDialog mode="ascendancy" onclose={() => (ascOpen = false)} />{/if}
+  {#if nodeTip}
+    {@const id = nodeTip.node.id}
+    <NodeTooltip
+      node={nodeTip.node}
+      fixed
+      bind:el={nodeTipEl}
+      left={nodeTip.x}
+      top={nodeTipTop}
+      override={build.tree?.overrides?.[String(id)]}
+      notCalc={new Set(build.tree?.unsupported?.[String(id)] ?? [])}
+    >
+      {#snippet foot()}
+        {#if allocated.has(id)}<span style:color="var(--ok)">{m.tree_allocated()}</span>{:else}<span></span>{/if}
+      {/snippet}
+    </NodeTooltip>
+  {/if}
   {#if tip}
     <PobTooltip lines={tip.tt.lines} header={tip.tt.header} runic={tip.tt.runic} uniqueGem={tip.tt.uniqueGem} itemArt={tip.tt.itemArt} x={tip.x} y={tip.y} />
-  {/if}
-  {#if tipNode}
-    <NodeTooltip node={tipNode} override={build.tree?.overrides?.[String(tipNode.id)]} notCalc={build.tree?.unsupported?.[String(tipNode.id)]} allocated fixed bind:el={nodeTipEl} left={nodeTipPos.left} top={nodeTipPos.top} />
   {/if}
   <CalcBreakdownWindows bind:this={breakdowns} revision={build.rev} onpinnedchange={(keys) => (pinnedKeys = keys)} />
 {/if}
@@ -463,18 +481,25 @@
   .portrait:hover {
     box-shadow: 0 0 0 1px var(--fg-2);
   }
-  .change {
+  .portrait-wrap {
+    position: relative;
+    display: inline-flex;
+    align-self: start;
+  }
+  .pin {
+    appearance: none;
     position: absolute;
-    left: 50%;
-    bottom: 4px;
-    transform: translateX(-50%);
-    padding: 1px 8px;
-    border: 1px solid var(--line-2);
-    border-radius: 10px;
-    background: var(--bg-2);
-    color: var(--fg-1);
-    font-size: var(--fs-2xs);
-    white-space: nowrap;
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    background: none;
+    transform: translate(-50%, -50%);
+    cursor: pointer;
+  }
+  .pin:hover,
+  .pin:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 1.5px var(--fg-0);
   }
   .who {
     display: flex;
