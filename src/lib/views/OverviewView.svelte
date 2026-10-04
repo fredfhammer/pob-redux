@@ -99,9 +99,6 @@
   });
   const jewels = $derived(slots.filter((s) => s.nodeId && s.itemId > 0));
 
-  const notCounted = $derived(build.sidebar?.notCounted);
-  const marked = $derived(new Set(notCounted?.items.map((x) => x.slot) ?? []));
-
   const AREA_VIEW: Record<string, ViewId> = {
     resistances: "items", "passive points": "tree", ascendancy: "tree", supports: "skills", spirit: "skills", reservation: "skills",
     buttons: "skills", charms: "items", flasks: "items", gear: "items", gems: "skills", movement: "items", pantheon: "config",
@@ -199,7 +196,7 @@
       <section class="panel">
         <div class="ph">
           <span class="t">{m.ov_gear()}</span>
-          <span class="s">{m.ov_gear_sum({ count: slots.filter((s) => s.itemId > 0 && !s.nodeId && s.shown !== false && !s.inactive).length })}{#if notCounted?.count}<span class="neg">{` · ${m.ov_gear_nc({ count: notCounted.count })}`}</span>{/if}</span>
+          <span class="s">{m.ov_gear_sum({ count: slots.filter((s) => s.itemId > 0 && !s.nodeId && s.shown !== false && !s.inactive).length })}</span>
         </div>
         <EquipmentGrid
           {slots}
@@ -208,7 +205,6 @@
           groups={build.skills?.socketGroups ?? []}
           selectedItem={null}
           legend={false}
-          {marked}
           onselect={(id) => go("items", { view: "items", item: id })}
           onitemhover={(e, id) => showTip(e, () => engine.itemTooltip({ itemId: id }))}
           ongemhover={(e, g, i) => showTip(e, () => engine.gemTooltip(g, i))}
@@ -239,7 +235,7 @@
 
     <div class="col">
       <section class="panel">
-        <div class="ph"><span class="t">{m.ov_health()}</span><span class="s">{findings.length + (notCounted?.count ? 1 : 0) ? m.ov_health_sum({ count: findings.length + (notCounted?.count ? 1 : 0) }) : m.ov_health_ok()}</span></div>
+        <div class="ph"><span class="t">{m.ov_health()}</span><span class="s">{findings.length ? m.ov_health_sum({ count: findings.length }) : m.ov_health_ok()}</span></div>
         {#each findings as f, i (i)}
           {@const view = AREA_VIEW[f.area]}
           <div class="finding">
@@ -248,13 +244,6 @@
             {#if view}<button class="golink" onclick={() => go(view)}>{VIEW_LABEL[view]} →</button>{/if}
           </div>
         {/each}
-        {#if notCounted?.count}
-          <div class="finding">
-            <span class="dot"></span>
-            <div class="ft"><div class="msg">{m.ov_nc_msg({ count: notCounted.count })}</div><div class="fix">{m.sidebar_not_counted_title()}</div></div>
-            <button class="golink" onclick={() => notCounted.items[0] ? go("items", { view: "items", item: slots.find((s) => s.slot === notCounted.items[0].slot)?.itemId ?? 0 }) : go("tree")}>{m.view_items()} →</button>
-          </div>
-        {/if}
       </section>
 
       <section class="panel">
