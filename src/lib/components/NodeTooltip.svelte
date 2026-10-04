@@ -5,8 +5,6 @@
   import PobText from "$lib/components/PobText.svelte";
   import { m } from "$lib/paraglide/messages";
 
-  // A passive node's tooltip, as the tree draws it; `foot` fills the left of
-  // the footer (allocation state and click hints), the node id sits right.
   let {
     node,
     left,
@@ -26,7 +24,7 @@
     node: TNode;
     left: number;
     top: number;
-    /** Placed against the viewport rather than the nearest positioned parent. */
+    /** Positions against the viewport. */
     fixed?: boolean;
     el?: HTMLDivElement | null;
     override?: { name?: string | null; stats?: string[] | null };
@@ -37,6 +35,7 @@
     recipe?: { word: string; name: string; url: string | null }[] | null;
     blocked?: string | null;
     diff?: NodeCompare | null;
+    /** Left side of the footer; the node id sits right. */
     foot?: Snippet;
   } = $props();
 </script>

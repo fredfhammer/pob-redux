@@ -4,7 +4,7 @@
   import { ui, type Jump } from "$lib/state/ui.svelte";
   import { game } from "$lib/state/game.svelte";
   import { loadTree } from "$lib/tree/load";
-  import { ascendancyPlate, plateNodes, type TNode, type TreeModel } from "$lib/tree/model";
+  import { ascendancyPlate, portraitPins, type TNode, type TreeModel } from "$lib/tree/model";
   import { stripPobText } from "$lib/pobtext";
   import ClassArt from "$lib/components/ClassArt.svelte";
   import CharacterDialog from "$lib/components/CharacterDialog.svelte";
@@ -100,21 +100,14 @@
   });
   const jewels = $derived(slots.filter((s) => s.nodeId && s.itemId > 0));
 
-  // Hover targets over the ascendancy nodes the portrait draws: it scales
-  // the plate so its half width fills the circle's radius.
   const PORTRAIT = 136;
   const allocated = $derived(new Set(build.tree?.allocatedNodes ?? []));
   const ascPins = $derived.by(() => {
     const name = info?.ascendClassName;
     if (!model || !name) return [];
     const plate = ascendancyPlate(model, info?.className ?? null, name);
-    if (!plate?.half) return [];
-    const k = PORTRAIT / 2 / plate.half;
-    return plateNodes(model, plate)
-      .filter((n) => n.kind === "notable" || n.kind === "normal")
-      .map((node) => ({ node, notable: node.kind === "notable", left: PORTRAIT / 2 + (node.x - plate.x) * k, top: PORTRAIT / 2 + (node.y - plate.y) * k }));
+    return plate ? portraitPins(model, plate, PORTRAIT) : [];
   });
-  // The tree tab's node tooltip, beside the hovered node and kept on screen once measured.
   let nodeTip = $state<{ node: TNode; x: number; y: number } | null>(null);
   let nodeTipEl = $state<HTMLDivElement | null>(null);
   let nodeTipTop = $state(0);
@@ -188,9 +181,11 @@
             {#each ascPins as p (p.node.id)}
               <button
                 class="pin"
-                class:notable={p.notable}
                 style:left="{p.left}px"
                 style:top="{p.top}px"
+                style:width="{p.size}px"
+                style:height="{p.size}px"
+                tabindex={p.notable ? 0 : -1}
                 aria-label={p.node.name}
                 onmouseenter={(e) => showNodeTip(e, p.node)}
                 onmouseleave={() => (nodeTip = null)}
@@ -459,18 +454,12 @@
   .pin {
     appearance: none;
     position: absolute;
-    width: 6px;
-    height: 6px;
     padding: 0;
     border: 0;
     border-radius: 50%;
     background: none;
     transform: translate(-50%, -50%);
     cursor: pointer;
-  }
-  .pin.notable {
-    width: 13px;
-    height: 13px;
   }
   .pin:hover,
   .pin:focus-visible {

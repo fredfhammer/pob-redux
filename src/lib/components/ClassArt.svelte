@@ -16,7 +16,7 @@
     ascendancy?: string | null;
     size?: number;
     zoom?: number;
-    /** When set, the ascendancy's own nodes and connectors are drawn over its art, these ones lit. */
+    /** Draws the ascendancy's nodes over its art, these ones lit. */
     allocated?: ReadonlySet<number> | null;
   } = $props();
 
@@ -54,13 +54,13 @@
     return { nodes, edges };
   });
 
-  // The tree tab's gold connector (its "Active" line), and how faint the untaken part is.
+  // The tree tab's "Active" connector colours.
   const GOLD = { outer: "#5d4717", inner: "#d9b256" };
   const UNTAKEN = 0.35;
   const SMALL_FILL = "#16120b";
-  // Notables drawn larger than true scale so their art reads at portrait size; small ones shrunk to stay out of the way.
+  // Notable art is unreadable at true scale on a 136px portrait.
   const BOOST = { notable: 1.35, normal: 0.5 };
-  // PoE1's ascendancy notables sit closer together, so they keep their true size.
+  // PoE1 notables sit closer together and overlap when enlarged.
   const BOOST_POE1 = { notable: 1, normal: 0.5 };
 
   function drawRound(ctx: CanvasRenderingContext2D, store: AssetStore, name: string, cx: number, cy: number, radius: number) {
@@ -78,8 +78,7 @@
 
   let faded: HTMLCanvasElement | null = null;
 
-  // The untaken part goes to its own canvas at full strength and is laid down
-  // faded in one pass, so a connector under a faded node stays hidden by it.
+  // Faded in one pass so connectors stay hidden under faded nodes.
   function drawSubtree(ctx: CanvasRenderingContext2D, store: AssetStore, r: number, dpr: number) {
     const sub = subtree;
     const p = plate;
@@ -109,7 +108,6 @@
       c.lineWidth = 1.2 * dpr;
       c.stroke();
 
-      // Small under notable, so the notables stay whole.
       const nodes = sub.nodes.filter((n) => lit.has(n.id) === on).sort((a, b) => Number(a.kind === "notable") - Number(b.kind === "notable"));
       for (const n of nodes) {
         const sx = tx(n.x);
@@ -123,7 +121,7 @@
         if (notable) {
           drawRound(c, store, n.icon, sx, sy, n.size.base * k * boost.notable);
         } else {
-          // No icon on the small ones: a dark disc so no connector shows through the frame.
+          // Fills the frame's hollow centre so connectors don't show through.
           c.beginPath();
           c.arc(sx, sy, half * 0.6, 0, Math.PI * 2);
           c.fillStyle = SMALL_FILL;
